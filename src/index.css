@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-grafit text-krem font-sans antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-naglowek;
+  }
+
+  /* Wymuszenie ciemnego motywu dla natywnych kontrolek (date inputy, dropdowny) */
+  input,
+  select,
+  textarea {
+    color-scheme: dark;
+  }
+}
+
+@layer components {
+  /* Karta / panel */
+  .karta {
+    @apply rounded-xl bg-karta shadow-karta;
+  }
+
+  /* Pole formularza */
+  .pole {
+    @apply w-full rounded-lg border border-white/10 bg-panel px-3 py-2 text-krem
+           placeholder:text-przygaszony/60 outline-none transition
+           focus:border-akcent/70 focus:ring-2 focus:ring-akcent/30;
+  }
+
+  .etykieta {
+    @apply mb-1.5 block text-sm font-medium text-przygaszony;
+  }
+
+  /* Przyciski */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2
+           text-sm font-semibold transition focus:outline-none
+           focus:ring-2 focus:ring-akcent/40 disabled:cursor-not-allowed
+           disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-akcent text-white hover:bg-akcent/90;
+  }
+
+  .btn-secondary {
+    @apply btn border border-white/15 bg-transparent text-krem hover:bg-white/5;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-przygaszony hover:bg-white/5 hover:text-krem;
+  }
+}

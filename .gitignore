@@ -1,0 +1,41 @@
+# Zależności
+node_modules
+.pnp
+.pnp.js
+
+# Build
+dist
+dist-ssr
+*.local
+
+# Artefakty kompilacji TypeScript (generowane przez `tsc -b`)
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Lokalne ustawienia Claude Code (specyficzne dla maszyny)
+.claude/settings.local.json
+
+# Zmienne środowiskowe (NIE commitować kluczy!)
+.env
+.env.local
+.env.*.local
+
+# Logi
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Edytory
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
