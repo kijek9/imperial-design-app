@@ -64,6 +64,10 @@ export type Zlecenie = {
   // pod automatyzację — w UI na razie wyświetlamy tylko checkbox).
   umowa_wyslana: boolean
   umowa_wyslana_at: string | null
+  // Płatności → "Zamówiono materiały" + znacznik czasu (trigger w bazie).
+  // Od tej daty liczymy termin zapłaty hurtowni (+14 dni) w zakładce Finanse.
+  zamowiono_materialy: boolean
+  zamowiono_materialy_at: string | null
   // TODO Etap 3: zadania, akcesoria, AGD, załączniki
 }
 

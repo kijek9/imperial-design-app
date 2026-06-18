@@ -6,6 +6,7 @@ import {
   progDlaTypu,
 } from '../constants/wycena'
 import type { TypWyceny, KosztPozycja, Zlecenie } from '../lib/types'
+import { symulacjaPodatkowa } from '../lib/finanse'
 import { formatZl } from '../lib/format'
 import Spinner from './Spinner'
 import OfertaWidok from './OfertaWidok'
@@ -78,17 +79,11 @@ export default function Wycena({
   const marza = cena > 0 ? Math.round((zarobek / cena) * 100) : 0
   const maxSuwak = Math.round(prog.premium * 1.6)
 
-  // Symulacja podatkowa (sp. z o.o., meble VAT 8% brutto, koszty VAT 23% brutto,
-  // CIT 9%). Liczona wprost z istniejących kosztyRazem i cena — bez dublowania.
-  const symulacja = useMemo(() => {
-    const vatNaliczony = kosztyRazem - kosztyRazem / 1.23 // do odliczenia z zakupów
-    const vatNalezny = cena - cena / 1.08 // VAT od sprzedaży 8%
-    const vatMebli = vatNalezny - vatNaliczony // zwykle ujemny (nadwyżka naliczonego)
-    const dochod = cena / 1.08 - kosztyRazem / 1.23 // przychód netto − koszty netto
-    const cit = 0.09 * Math.max(0, dochod) // CIT tylko od dodatniego dochodu
-    const poCit = dochod - cit
-    return { vatNaliczony, vatNalezny, vatMebli, dochod, cit, poCit }
-  }, [kosztyRazem, cena])
+  // Symulacja podatkowa — wspólna funkcja (ta sama logika w zakładce Finanse).
+  const symulacja = useMemo(
+    () => symulacjaPodatkowa(kosztyRazem, cena),
+    [kosztyRazem, cena]
+  )
 
   // Zmiana typu → suwak ustawia się na "standard" nowego typu.
   function zmienTyp(nowy: TypWyceny) {

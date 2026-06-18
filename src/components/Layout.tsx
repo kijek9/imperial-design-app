@@ -38,6 +38,9 @@ export default function Layout({ children }: { children: ReactNode }) {
               <NavLink to="/kalendarz" className={linkKlasy}>
                 Kalendarz
               </NavLink>
+              <NavLink to="/finanse" className={linkKlasy}>
+                Finanse
+              </NavLink>
             </nav>
           </div>
 

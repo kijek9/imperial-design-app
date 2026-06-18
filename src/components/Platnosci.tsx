@@ -138,19 +138,32 @@ export default function Platnosci({
 
   return (
     <div className="space-y-5">
-      {/* ── Ustawienia zlecenia: umowa Autenti + typ klienta ── */}
+      {/* ── Ustawienia zlecenia: umowa Autenti + materiały + typ klienta ── */}
       <div className="karta space-y-4 p-6">
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={zlecenie.umowa_wyslana}
-            onChange={(e) =>
-              aktualizujZlecenie({ umowa_wyslana: e.target.checked })
-            }
-            className="h-4 w-4 accent-akcent"
-          />
-          Umowa Autenti wysłana
-        </label>
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={zlecenie.umowa_wyslana}
+              onChange={(e) =>
+                aktualizujZlecenie({ umowa_wyslana: e.target.checked })
+              }
+              className="h-4 w-4 accent-akcent"
+            />
+            Umowa Autenti wysłana
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={zlecenie.zamowiono_materialy}
+              onChange={(e) =>
+                aktualizujZlecenie({ zamowiono_materialy: e.target.checked })
+              }
+              className="h-4 w-4 accent-akcent"
+            />
+            Zamówiono materiały
+          </label>
+        </div>
 
         <div>
           <label className="etykieta">Typ klienta</label>

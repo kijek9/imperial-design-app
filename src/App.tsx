@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import ZleceniaListPage from './pages/ZleceniaListPage'
 import ZlecenieDetailPage from './pages/ZlecenieDetailPage'
 import KalendarzPage from './pages/KalendarzPage'
+import FinansePage from './pages/FinansePage'
 
 export default function App() {
   return (
@@ -39,6 +40,16 @@ export default function App() {
           <ProtectedRoute>
             <Layout>
               <KalendarzPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/finanse"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <FinansePage />
             </Layout>
           </ProtectedRoute>
         }
