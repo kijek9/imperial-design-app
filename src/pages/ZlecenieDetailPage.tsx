@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useProfile } from '../hooks/useProfile'
@@ -31,8 +31,38 @@ export default function ZlecenieDetailPage() {
 
   // Stan formularza (edytowalna kopia zlecenia).
   const [form, setForm] = useState<Zlecenie | null>(null)
-  const [zapis, setZapis] = useState(false)
-  const [komunikat, setKomunikat] = useState<string | null>(null)
+  const [zajety, setZajety] = useState(false) // blokada przycisku Archiwizuj
+  // Dyskretny sygnał autozapisu + ewentualny komunikat błędu.
+  const [zapisano, setZapisano] = useState(false)
+  const [blad, setBlad] = useState<string | null>(null)
+  const zapisanoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+
+  // Krótki błysk „Zapisano" po udanym autozapisie.
+  function pokazZapisano() {
+    setBlad(null)
+    setZapisano(true)
+    clearTimeout(zapisanoTimer.current)
+    zapisanoTimer.current = setTimeout(() => setZapisano(false), 1500)
+  }
+  useEffect(() => () => clearTimeout(zapisanoTimer.current), [])
+
+  // Autozapis: utrwala podany zestaw pól zlecenia od razu do bazy.
+  async function zapiszPatch(patch: ZlecenieUpdate) {
+    if (!id) return
+    const { error } = await supabase.from('zlecenia').update(patch).eq('id', id)
+    if (error) {
+      setZapisano(false)
+      setBlad(
+        error.code === '23505'
+          ? 'Zlecenie o tym numerze już istnieje.'
+          : 'Nie udało się zapisać zmiany.'
+      )
+    } else {
+      pokazZapisano()
+    }
+  }
 
   useEffect(() => {
     if (!id) return
@@ -59,13 +89,41 @@ export default function ZlecenieDetailPage() {
     }
   }, [id])
 
-  // Pomocnik do aktualizacji pojedynczego pola formularza.
+  // Zmiana pola tylko lokalnie — dla pól tekstowych (zapis nastąpi na onBlur).
   function ustaw<K extends keyof Zlecenie>(klucz: K, wartosc: Zlecenie[K]) {
     setForm((f) => (f ? { ...f, [klucz]: wartosc } : f))
-    setKomunikat(null)
   }
 
-  // ── Tematy otwarte: dodawanie / edycja / usuwanie pozycji ─────────────
+  // Zmiana pola z natychmiastowym autozapisem — selecty, checkboxy, daty.
+  function ustawZapisz<K extends keyof Zlecenie>(klucz: K, wartosc: Zlecenie[K]) {
+    setForm((f) => (f ? { ...f, [klucz]: wartosc } : f))
+    zapiszPatch({ [klucz]: wartosc } as ZlecenieUpdate)
+  }
+
+  // Zapis pojedynczego pola tekstowego po wyjściu z pola (onBlur).
+  function zapiszPole<K extends keyof Zlecenie>(klucz: K) {
+    if (!form) return
+    zapiszPatch({ [klucz]: form[klucz] } as ZlecenieUpdate)
+  }
+
+  // numer / nazwa: przy zapisie przycinamy białe znaki.
+  function zapiszPoleTrim(klucz: 'numer' | 'nazwa') {
+    if (!form) return
+    const wartosc = form[klucz].trim()
+    if (wartosc !== form[klucz]) setForm({ ...form, [klucz]: wartosc })
+    zapiszPatch({ [klucz]: wartosc })
+  }
+
+  // ── Tematy otwarte: autozapis listy (czyścimy puste wiersze przy zapisie) ─
+  function zapiszTematy(lista: TematOtwarty[]) {
+    zapiszPatch({
+      tematy_otwarte: lista
+        .map((t) => ({ ...t, tresc: t.tresc.trim() }))
+        .filter((t) => t.tresc !== ''),
+    })
+  }
+
+  // Dodanie pustej pozycji — lokalnie; zapis nastąpi po wpisaniu treści.
   function dodajTemat() {
     const nowy: TematOtwarty = {
       id: crypto.randomUUID(),
@@ -75,89 +133,45 @@ export default function ZlecenieDetailPage() {
     setForm((f) =>
       f ? { ...f, tematy_otwarte: [...f.tematy_otwarte, nowy] } : f
     )
-    setKomunikat(null)
   }
 
-  function zmienTemat(id: string, zmiana: Partial<Omit<TematOtwarty, 'id'>>) {
+  // Edycja treści — tylko lokalnie; utrwalenie na onBlur pola.
+  function zmienTresc(id: string, tresc: string) {
     setForm((f) =>
       f
         ? {
             ...f,
             tematy_otwarte: f.tematy_otwarte.map((t) =>
-              t.id === id ? { ...t, ...zmiana } : t
+              t.id === id ? { ...t, tresc } : t
             ),
           }
         : f
     )
-    setKomunikat(null)
   }
 
-  function usunTemat(id: string) {
-    setForm((f) =>
-      f
-        ? { ...f, tematy_otwarte: f.tematy_otwarte.filter((t) => t.id !== id) }
-        : f
+  // Odhaczenie tematu — natychmiastowy autozapis.
+  function przelaczTemat(id: string, domkniete: boolean) {
+    if (!form) return
+    const lista = form.tematy_otwarte.map((t) =>
+      t.id === id ? { ...t, domkniete } : t
     )
-    setKomunikat(null)
+    setForm({ ...form, tematy_otwarte: lista })
+    zapiszTematy(lista)
   }
 
-  async function zapiszZmiany() {
-    if (!form || !id) return
-    setZapis(true)
-    setKomunikat(null)
-
-    const zmiany: ZlecenieUpdate = {
-      numer: form.numer.trim(),
-      nazwa: form.nazwa.trim(),
-      status: form.status,
-      etap: form.etap,
-      data_montazu: form.data_montazu,
-      data_max: form.data_max,
-      adres: form.adres,
-      link_maps: form.link_maps,
-      telefon: form.telefon,
-      kwota_umowa: form.kwota_umowa,
-      kwota_umowa_reczna: form.kwota_umowa_reczna,
-      odpowiedzialny: form.odpowiedzialny,
-      projekt_sprawdzony: form.projekt_sprawdzony,
-      protokol_odbioru: form.protokol_odbioru,
-      // Sekcja Pomiar (przekazany_do_rysowania_at ustawia trigger w bazie).
-      data_pomiaru: form.data_pomiaru,
-      pomiar_wykonany: form.pomiar_wykonany,
-      przekazany_do_rysowania: form.przekazany_do_rysowania,
-      drive_link: form.drive_link,
-      // Tematy otwarte — czyścimy puste wiersze (sam separator/pusty tekst).
-      tematy_otwarte: form.tematy_otwarte
-        .map((t) => ({ ...t, tresc: t.tresc.trim() }))
-        .filter((t) => t.tresc !== ''),
-    }
-
-    const { data, error } = await supabase
-      .from('zlecenia')
-      .update(zmiany)
-      .eq('id', id)
-      .select('*')
-      .single()
-
-    setZapis(false)
-
-    if (error) {
-      setKomunikat(
-        error.code === '23505'
-          ? 'Zlecenie o tym numerze już istnieje.'
-          : 'Nie udało się zapisać zmian.'
-      )
-      return
-    }
-    setForm(data)
-    setKomunikat('Zapisano zmiany.')
+  // Usunięcie pozycji — natychmiastowy autozapis.
+  function usunTemat(id: string) {
+    if (!form) return
+    const lista = form.tematy_otwarte.filter((t) => t.id !== id)
+    setForm({ ...form, tematy_otwarte: lista })
+    zapiszTematy(lista)
   }
 
   // Przywróć kwotę umowy z zapisanej wyceny (koszty + zarobek) i wyłącz
   // tryb ręczny, by znów była auto-synchronizowana.
   async function przywrocZWyceny() {
     if (!form || !id) return
-    setKomunikat(null)
+    setBlad(null)
     const { data: w } = await supabase
       .from('wyceny')
       .select('koszty, zarobek')
@@ -165,7 +179,7 @@ export default function ZlecenieDetailPage() {
       .maybeSingle()
 
     if (!w) {
-      setKomunikat('Brak zapisanej wyceny dla tego zlecenia.')
+      setBlad('Brak zapisanej wyceny dla tego zlecenia.')
       return
     }
     const kosztyRazem = (w.koszty ?? []).reduce(
@@ -174,17 +188,15 @@ export default function ZlecenieDetailPage() {
     )
     const cena = kosztyRazem + w.zarobek
 
-    setZapis(true)
     const { data, error } = await supabase
       .from('zlecenia')
       .update({ kwota_umowa: cena, kwota_umowa_reczna: false })
       .eq('id', id)
       .select('*')
       .single()
-    setZapis(false)
     if (!error && data) {
       setForm(data)
-      setKomunikat('Przywrócono kwotę z wyceny.')
+      pokazZapisano()
     }
   }
 
@@ -192,14 +204,14 @@ export default function ZlecenieDetailPage() {
   async function przelaczArchiwum() {
     if (!form || !id) return
     const nowy = !form.zarchiwizowane
-    setZapis(true)
+    setZajety(true)
     const { data, error } = await supabase
       .from('zlecenia')
       .update({ zarchiwizowane: nowy })
       .eq('id', id)
       .select('*')
       .single()
-    setZapis(false)
+    setZajety(false)
     if (!error && data) {
       setForm(data)
       // Po archiwizacji wracamy do listy.
@@ -230,7 +242,7 @@ export default function ZlecenieDetailPage() {
               type="date"
               value={form.data_pomiaru ?? ''}
               onChange={(e) =>
-                ustaw('data_pomiaru', pustyNaNull(e.target.value))
+                ustawZapisz('data_pomiaru', pustyNaNull(e.target.value))
               }
               className="pole"
             />
@@ -244,6 +256,7 @@ export default function ZlecenieDetailPage() {
                 onChange={(e) =>
                   ustaw('drive_link', pustyNaNull(e.target.value))
                 }
+                onBlur={() => zapiszPole('drive_link')}
                 className="pole flex-1"
                 placeholder="https://drive.google.com/…"
               />
@@ -266,7 +279,7 @@ export default function ZlecenieDetailPage() {
             <input
               type="checkbox"
               checked={form.pomiar_wykonany}
-              onChange={(e) => ustaw('pomiar_wykonany', e.target.checked)}
+              onChange={(e) => ustawZapisz('pomiar_wykonany', e.target.checked)}
               className="h-4 w-4 accent-akcent"
             />
             Pomiar wykonany
@@ -276,7 +289,7 @@ export default function ZlecenieDetailPage() {
               type="checkbox"
               checked={form.przekazany_do_rysowania}
               onChange={(e) =>
-                ustaw('przekazany_do_rysowania', e.target.checked)
+                ustawZapisz('przekazany_do_rysowania', e.target.checked)
               }
               className="h-4 w-4 accent-akcent"
             />
@@ -317,14 +330,13 @@ export default function ZlecenieDetailPage() {
                 <input
                   type="checkbox"
                   checked={t.domkniete}
-                  onChange={(e) =>
-                    zmienTemat(t.id, { domkniete: e.target.checked })
-                  }
+                  onChange={(e) => przelaczTemat(t.id, e.target.checked)}
                   className="h-4 w-4 shrink-0 accent-akcent"
                 />
                 <input
                   value={t.tresc}
-                  onChange={(e) => zmienTemat(t.id, { tresc: e.target.value })}
+                  onChange={(e) => zmienTresc(t.id, e.target.value)}
+                  onBlur={() => form && zapiszTematy(form.tematy_otwarte)}
                   className={`pole flex-1 ${
                     t.domkniete ? 'text-przygaszony line-through' : ''
                   }`}
@@ -384,6 +396,7 @@ export default function ZlecenieDetailPage() {
             <input
               value={form.numer}
               onChange={(e) => ustaw('numer', e.target.value)}
+              onBlur={() => zapiszPoleTrim('numer')}
               className="pole"
             />
           </div>
@@ -392,6 +405,7 @@ export default function ZlecenieDetailPage() {
             <input
               value={form.nazwa}
               onChange={(e) => ustaw('nazwa', e.target.value)}
+              onBlur={() => zapiszPoleTrim('nazwa')}
               className="pole"
             />
           </div>
@@ -433,7 +447,15 @@ export default function ZlecenieDetailPage() {
       </div>
 
       {/* ───────── Zakładka: Płatności ───────── */}
-      {zakladka === 'platnosci' && <Platnosci zlecenie={form} />}
+      {zakladka === 'platnosci' && (
+        <Platnosci
+          zlecenie={form}
+          onZlecenieUpdate={(patch) =>
+            setForm((f) => (f ? { ...f, ...patch } : f))
+          }
+          onZapisano={pokazZapisano}
+        />
+      )}
 
       {/* ───────── Zakładka: Wycena ───────── */}
       {zakladka === 'wycena' && (
@@ -461,7 +483,7 @@ export default function ZlecenieDetailPage() {
             <select
               value={form.status}
               onChange={(e) =>
-                ustaw('status', e.target.value as Zlecenie['status'])
+                ustawZapisz('status', e.target.value as Zlecenie['status'])
               }
               className="pole"
             >
@@ -477,7 +499,9 @@ export default function ZlecenieDetailPage() {
             <label className="etykieta">Etap</label>
             <select
               value={form.etap}
-              onChange={(e) => ustaw('etap', e.target.value as Zlecenie['etap'])}
+              onChange={(e) =>
+                ustawZapisz('etap', e.target.value as Zlecenie['etap'])
+              }
               className="pole"
             >
               {ETAPY.map((et) => (
@@ -493,7 +517,9 @@ export default function ZlecenieDetailPage() {
             <input
               type="date"
               value={form.data_montazu ?? ''}
-              onChange={(e) => ustaw('data_montazu', pustyNaNull(e.target.value))}
+              onChange={(e) =>
+                ustawZapisz('data_montazu', pustyNaNull(e.target.value))
+              }
               className="pole"
             />
           </div>
@@ -503,7 +529,9 @@ export default function ZlecenieDetailPage() {
             <input
               type="date"
               value={form.data_max ?? ''}
-              onChange={(e) => ustaw('data_max', pustyNaNull(e.target.value))}
+              onChange={(e) =>
+                ustawZapisz('data_max', pustyNaNull(e.target.value))
+              }
               className="pole"
             />
           </div>
@@ -513,6 +541,7 @@ export default function ZlecenieDetailPage() {
             <input
               value={form.telefon ?? ''}
               onChange={(e) => ustaw('telefon', pustyNaNull(e.target.value))}
+              onBlur={() => zapiszPole('telefon')}
               className="pole"
               placeholder="np. 600 100 200"
             />
@@ -550,8 +579,14 @@ export default function ZlecenieDetailPage() {
                       }
                     : f
                 )
-                setKomunikat(null)
               }}
+              onBlur={() =>
+                form &&
+                zapiszPatch({
+                  kwota_umowa: form.kwota_umowa,
+                  kwota_umowa_reczna: form.kwota_umowa_reczna,
+                })
+              }
               className="pole"
               placeholder="np. 12500"
             />
@@ -562,6 +597,7 @@ export default function ZlecenieDetailPage() {
             <input
               value={form.adres ?? ''}
               onChange={(e) => ustaw('adres', pustyNaNull(e.target.value))}
+              onBlur={() => zapiszPole('adres')}
               className="pole"
               placeholder="ul. Przykładowa 1, 00-000 Miasto"
             />
@@ -572,6 +608,7 @@ export default function ZlecenieDetailPage() {
             <input
               value={form.link_maps ?? ''}
               onChange={(e) => ustaw('link_maps', pustyNaNull(e.target.value))}
+              onBlur={() => zapiszPole('link_maps')}
               className="pole"
               placeholder="https://maps.google.com/…"
             />
@@ -582,7 +619,7 @@ export default function ZlecenieDetailPage() {
             <select
               value={form.odpowiedzialny ?? ''}
               onChange={(e) =>
-                ustaw('odpowiedzialny', e.target.value || null)
+                ustawZapisz('odpowiedzialny', e.target.value || null)
               }
               className="pole"
             >
@@ -602,7 +639,9 @@ export default function ZlecenieDetailPage() {
             <input
               type="checkbox"
               checked={form.projekt_sprawdzony}
-              onChange={(e) => ustaw('projekt_sprawdzony', e.target.checked)}
+              onChange={(e) =>
+                ustawZapisz('projekt_sprawdzony', e.target.checked)
+              }
               className="h-4 w-4 accent-akcent"
             />
             Projekt sprawdzony
@@ -611,7 +650,9 @@ export default function ZlecenieDetailPage() {
             <input
               type="checkbox"
               checked={form.protokol_odbioru}
-              onChange={(e) => ustaw('protokol_odbioru', e.target.checked)}
+              onChange={(e) =>
+                ustawZapisz('protokol_odbioru', e.target.checked)
+              }
               className="h-4 w-4 accent-akcent"
             />
             Protokół odbioru
@@ -632,34 +673,35 @@ export default function ZlecenieDetailPage() {
 
         {pomiarNaDole && sekcjaPomiar()}
 
-        {/* Akcje — przycisk Zapisz utrwala wszystkie sekcje Szczegółów */}
+        {/* Akcje — zmiany zapisują się automatycznie (autosave) */}
         <div className="karta flex flex-wrap items-center justify-between gap-4 p-6">
           <button
             onClick={przelaczArchiwum}
-            disabled={zapis}
+            disabled={zajety}
             className="btn-secondary"
           >
             {form.zarchiwizowane ? 'Przywróć z archiwum' : 'Archiwizuj'}
           </button>
-
-          <div className="flex items-center gap-4">
-            {komunikat && (
-              <span className="text-sm text-przygaszony">{komunikat}</span>
-            )}
-            <button
-              onClick={zapiszZmiany}
-              disabled={zapis}
-              className="btn-primary"
-            >
-              {zapis ? 'Zapisywanie…' : 'Zapisz'}
-            </button>
-          </div>
+          <span className="text-xs text-przygaszony">
+            Zmiany zapisują się automatycznie.
+          </span>
         </div>
       </div>
       )}
 
       {/* Komentarze */}
       <Komentarze zlecenieId={form.id} />
+
+      {/* Dyskretny sygnał autozapisu (prawy dolny róg) */}
+      {blad ? (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-akcent/15 px-3 py-1.5 text-sm text-akcent shadow ring-1 ring-akcent/30">
+          {blad}
+        </div>
+      ) : zapisano ? (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-emerald-500/15 px-3 py-1.5 text-sm text-emerald-300 shadow ring-1 ring-emerald-500/30">
+          ✓ Zapisano
+        </div>
+      ) : null}
     </div>
   )
 }

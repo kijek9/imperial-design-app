@@ -58,8 +58,18 @@ export type Zlecenie = {
   drive_link: string | null
   // Szczegóły → sekcja Tematy otwarte
   tematy_otwarte: TematOtwarty[]
+  // Płatności → typ klienta (ustalany raz na zlecenie; null = nieustalony)
+  typ_klienta: TypKlienta | null
+  // Płatności → "Umowa Autenti wysłana" + znacznik czasu (trigger w bazie,
+  // pod automatyzację — w UI na razie wyświetlamy tylko checkbox).
+  umowa_wyslana: boolean
+  umowa_wyslana_at: string | null
   // TODO Etap 3: zadania, akcesoria, AGD, załączniki
 }
+
+// Typ klienta decyduje, jakie dokumenty można oznaczać przy transzach:
+// firma → tylko faktura; indywidualny → faktura + paragon.
+export type TypKlienta = 'firma' | 'indywidualny'
 
 // Pola, które ustawiamy przy tworzeniu nowego zlecenia.
 export type ZlecenieInsert = Pick<Zlecenie, 'numer' | 'nazwa'> &
@@ -122,6 +132,13 @@ export type Platnosc = {
   kwota: number
   zaplacone: boolean
   data_wplaty: string | null
+  // Dokumenty per transza, zależne od typ_klienta zlecenia.
+  faktura_wystawiona: boolean
+  paragon_wystawiony: boolean
+  // Znacznik czasu wysłania faktury (trigger w bazie) — pod terminy płatności
+  // i podsumowanie w zakładce Finanse. W UI na razie nieużywany.
+  faktura_wystawiona_at: string | null
+  // Stare pola (Etap 2) — zachowane w bazie, ale UI ich już nie używa.
   dokument_typ: DokumentTyp | null
   dokument_wystawiony: boolean
   created_at: string

@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { Platnosc, PlatnoscUpdate, DokumentTyp, Zlecenie } from '../lib/types'
+import type {
+  Platnosc,
+  PlatnoscUpdate,
+  TypKlienta,
+  Zlecenie,
+  ZlecenieUpdate,
+} from '../lib/types'
 import { podzialRat, terminRaty2, NAZWY_RAT, PROCENTY_RAT } from '../lib/raty'
 import { formatZl, formatData } from '../lib/format'
 import Spinner from './Spinner'
@@ -24,7 +30,18 @@ function terminRaty(etap: number, dataMontazu: string | null): string {
   return t ? formatData(t) : 'po ustaleniu montażu'
 }
 
-export default function Platnosci({ zlecenie }: { zlecenie: Zlecenie }) {
+export default function Platnosci({
+  zlecenie,
+  onZlecenieUpdate,
+  onZapisano,
+}: {
+  zlecenie: Zlecenie
+  // Pozwala zsynchronizować zmiany pól zlecenia (typ klienta, umowa) z kartą
+  // nadrzędną — zapis idzie i tak bezpośrednio do bazy poniżej.
+  onZlecenieUpdate?: (patch: Partial<Zlecenie>) => void
+  // Sygnał udanego autozapisu (wspólny toast „Zapisano" w karcie zlecenia).
+  onZapisano?: () => void
+}) {
   const [raty, setRaty] = useState<Platnosc[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -97,26 +114,69 @@ export default function Platnosci({ zlecenie }: { zlecenie: Zlecenie }) {
   // Aktualizacja pojedynczej raty (DB + lokalny stan).
   async function aktualizuj(id: string, patch: PlatnoscUpdate) {
     setRaty((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
-    await supabase.from('platnosci').update(patch).eq('id', id)
+    const { error } = await supabase.from('platnosci').update(patch).eq('id', id)
+    if (!error) onZapisano?.()
+  }
+
+  // Aktualizacja pól samego zlecenia (typ klienta, umowa) — DB + synchronizacja
+  // z kartą nadrzędną. umowa_wyslana_at ustawia trigger w bazie.
+  async function aktualizujZlecenie(patch: ZlecenieUpdate) {
+    onZlecenieUpdate?.(patch)
+    const { error } = await supabase
+      .from('zlecenia')
+      .update(patch)
+      .eq('id', zlecenie.id)
+    if (!error) onZapisano?.()
   }
 
   if (loading) return <Spinner label="Wczytywanie płatności…" />
 
-  if (zlecenie.kwota_umowa == null || raty.length === 0) {
-    return (
-      <div className="karta p-8 text-center text-przygaszony">
-        Ustaw <span className="text-krem">kwotę na umowie</span> (zakładka
-        Szczegóły lub Wycena), aby wygenerować raty 40/40/20.
-      </div>
-    )
-  }
-
+  const brakRat = zlecenie.kwota_umowa == null || raty.length === 0
   const suma = raty.reduce((s, r) => s + r.kwota, 0)
   const wplacono = raty.filter((r) => r.zaplacone).reduce((s, r) => s + r.kwota, 0)
   const procent = suma > 0 ? Math.round((wplacono / suma) * 100) : 0
 
   return (
     <div className="space-y-5">
+      {/* ── Ustawienia zlecenia: umowa Autenti + typ klienta ── */}
+      <div className="karta space-y-4 p-6">
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={zlecenie.umowa_wyslana}
+            onChange={(e) =>
+              aktualizujZlecenie({ umowa_wyslana: e.target.checked })
+            }
+            className="h-4 w-4 accent-akcent"
+          />
+          Umowa Autenti wysłana
+        </label>
+
+        <div>
+          <label className="etykieta">Typ klienta</label>
+          <select
+            value={zlecenie.typ_klienta ?? ''}
+            onChange={(e) =>
+              aktualizujZlecenie({
+                typ_klienta: (e.target.value || null) as TypKlienta | null,
+              })
+            }
+            className="pole max-w-xs"
+          >
+            <option value="">— nieustalony —</option>
+            <option value="firma">Firma</option>
+            <option value="indywidualny">Klient indywidualny</option>
+          </select>
+        </div>
+      </div>
+
+      {brakRat ? (
+        <div className="karta p-8 text-center text-przygaszony">
+          Ustaw <span className="text-krem">kwotę na umowie</span> (zakładka
+          Szczegóły lub Wycena), aby wygenerować raty 40/40/20.
+        </div>
+      ) : (
+        <>
       {/* Podsumowanie + pasek postępu */}
       <div className="karta p-6">
         <div className="mb-2 flex items-baseline justify-between">
@@ -140,23 +200,28 @@ export default function Platnosci({ zlecenie }: { zlecenie: Zlecenie }) {
           <RataKarta
             key={r.id}
             rata={r}
+            typKlienta={zlecenie.typ_klienta}
             termin={terminRaty(r.etap, zlecenie.data_montazu)}
             dni={r.etap === 2 ? dniDo(terminRaty2(zlecenie.data_montazu)) : null}
             onChange={(patch) => aktualizuj(r.id, patch)}
           />
         ))}
       </div>
+        </>
+      )}
     </div>
   )
 }
 
 function RataKarta({
   rata,
+  typKlienta,
   termin,
   dni,
   onChange,
 }: {
   rata: Platnosc
+  typKlienta: TypKlienta | null
   termin: string
   dni: number | null
   onChange: (patch: PlatnoscUpdate) => void
@@ -199,6 +264,42 @@ function RataKarta({
         )}
       </p>
 
+      {/* Dokumenty per transza — nad „Zapłacone" (najpierw faktura, potem wpłata) */}
+      <div className="space-y-2 border-t border-white/10 pt-3">
+        {typKlienta == null ? (
+          <p className="text-xs text-przygaszony">
+            Wybierz typ klienta, aby oznaczać dokumenty
+          </p>
+        ) : (
+          <>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={rata.faktura_wystawiona}
+                onChange={(e) =>
+                  onChange({ faktura_wystawiona: e.target.checked })
+                }
+                className="h-4 w-4 accent-akcent"
+              />
+              Faktura wysłana
+            </label>
+            {typKlienta === 'indywidualny' && (
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={rata.paragon_wystawiony}
+                  onChange={(e) =>
+                    onChange({ paragon_wystawiony: e.target.checked })
+                  }
+                  className="h-4 w-4 accent-akcent"
+                />
+                Paragon wystawiony
+              </label>
+            )}
+          </>
+        )}
+      </div>
+
       <label className="flex cursor-pointer items-center gap-2 border-t border-white/10 pt-3 text-sm">
         <input
           type="checkbox"
@@ -210,43 +311,14 @@ function RataKarta({
       </label>
 
       {rata.zaplacone && (
-        <div className="space-y-3">
-          <div>
-            <label className="etykieta">Data wpłaty</label>
-            <input
-              type="date"
-              value={rata.data_wplaty ?? ''}
-              onChange={(e) =>
-                onChange({ data_wplaty: e.target.value || null })
-              }
-              className="pole"
-            />
-          </div>
-          <div>
-            <label className="etykieta">Dokument</label>
-            <select
-              value={rata.dokument_typ ?? ''}
-              onChange={(e) =>
-                onChange({
-                  dokument_typ: (e.target.value || null) as DokumentTyp | null,
-                })
-              }
-              className="pole"
-            >
-              <option value="">— brak —</option>
-              <option value="faktura">Faktura</option>
-              <option value="paragon">Paragon</option>
-            </select>
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={rata.dokument_wystawiony}
-              onChange={(e) => onChange({ dokument_wystawiony: e.target.checked })}
-              className="h-4 w-4 accent-akcent"
-            />
-            Dokument wystawiony
-          </label>
+        <div>
+          <label className="etykieta">Data wpłaty</label>
+          <input
+            type="date"
+            value={rata.data_wplaty ?? ''}
+            onChange={(e) => onChange({ data_wplaty: e.target.value || null })}
+            className="pole"
+          />
         </div>
       )}
     </div>
