@@ -64,3 +64,32 @@
     @apply btn bg-transparent text-przygaszony hover:bg-white/5 hover:text-krem;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Eksport oferty do PDF (window.print).
+   Na ekranie #oferta-druk jest ukryty; przy druku ukrywamy CAŁĄ
+   aplikację i pokazujemy wyłącznie ofertę (bez kalkulacji/kosztów).
+   ───────────────────────────────────────────────────────────── */
+@media screen {
+  #oferta-druk {
+    display: none;
+  }
+}
+
+@media print {
+  /* Ukryj wszystko… */
+  body * {
+    visibility: hidden !important;
+  }
+  /* …i pokaż tylko dokument oferty. */
+  #oferta-druk,
+  #oferta-druk * {
+    visibility: visible !important;
+  }
+  #oferta-druk {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    background: #fff;
+  }
+}

@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import ZleceniaListPage from './pages/ZleceniaListPage'
 import ZlecenieDetailPage from './pages/ZlecenieDetailPage'
+import KalendarzPage from './pages/KalendarzPage'
 
 export default function App() {
   return (
@@ -28,6 +29,16 @@ export default function App() {
           <ProtectedRoute>
             <Layout>
               <ZlecenieDetailPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/kalendarz"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <KalendarzPage />
             </Layout>
           </ProtectedRoute>
         }

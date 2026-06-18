@@ -34,3 +34,10 @@ export function formatKwota(kwota: number | null | undefined): string {
     currency: 'PLN',
   }).format(kwota)
 }
+
+// Kwota w pełnych złotych, spacja jako separator tysięcy, np. "12 500 zł".
+// Używane w Etapie 2 (wycena, raty — kwoty operują na pełnych zł).
+export function formatZl(kwota: number | null | undefined): string {
+  if (kwota === null || kwota === undefined || Number.isNaN(kwota)) return '—'
+  return `${Math.round(kwota).toLocaleString('pl-PL')} zł`
+}

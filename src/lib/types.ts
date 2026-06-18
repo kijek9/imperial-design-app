@@ -36,7 +36,9 @@ export type Zlecenie = {
   odpowiedzialny: string | null
   zarchiwizowane: boolean
   created_at: string
-  // TODO Etap 2: pola wyceny (np. kalkulacja, marża)
+  // Etap 2: gdy true, kwota_umowa była ustawiona ręcznie (rabaty/negocjacje)
+  // i NIE jest już auto-nadpisywana z wyceny.
+  kwota_umowa_reczna: boolean
   // TODO Etap 3: zadania, akcesoria, AGD, załączniki
 }
 
@@ -65,6 +67,56 @@ export type Profil = {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Etap 2 — Wycena
+// ─────────────────────────────────────────────────────────────
+
+// Typ zlecenia decyduje o progach czystego zarobku (patrz constants/wycena.ts).
+export type TypWyceny = 'szafka' | 'szafa' | 'duza' | 'kuchnia'
+
+// Pojedyncza pozycja kosztu w kalkulacji: l = etykieta, v = kwota (zł).
+export type KosztPozycja = { l: string; v: number }
+
+export type Wycena = {
+  id: string
+  zlecenie_id: string
+  typ: TypWyceny
+  koszty: KosztPozycja[]
+  zarobek: number
+  created_at: string
+  updated_at: string
+}
+
+export type WycenaUpsert = Pick<Wycena, 'zlecenie_id' | 'typ' | 'koszty' | 'zarobek'>
+
+// ─────────────────────────────────────────────────────────────
+// Etap 2 — Płatności (raty 40/40/20)
+// ─────────────────────────────────────────────────────────────
+
+export type DokumentTyp = 'faktura' | 'paragon'
+
+export type Platnosc = {
+  id: string
+  zlecenie_id: string
+  etap: number // 1 | 2 | 3
+  nazwa: string
+  procent: number
+  kwota: number
+  zaplacone: boolean
+  data_wplaty: string | null
+  dokument_typ: DokumentTyp | null
+  dokument_wystawiony: boolean
+  created_at: string
+}
+
+export type PlatnoscInsert = Pick<
+  Platnosc,
+  'zlecenie_id' | 'etap' | 'nazwa' | 'procent' | 'kwota'
+> &
+  Partial<Omit<Platnosc, 'id' | 'created_at'>>
+
+export type PlatnoscUpdate = Partial<Omit<Platnosc, 'id' | 'created_at'>>
+
+// ─────────────────────────────────────────────────────────────
 // Typ bazy danych dla createClient<Database>()
 // ─────────────────────────────────────────────────────────────
 export interface Database {
@@ -86,6 +138,18 @@ export interface Database {
         Row: Profil
         Insert: Partial<Profil> & Pick<Profil, 'id'>
         Update: Partial<Profil>
+        Relationships: []
+      }
+      wyceny: {
+        Row: Wycena
+        Insert: WycenaUpsert & Partial<Pick<Wycena, 'id'>>
+        Update: Partial<WycenaUpsert>
+        Relationships: []
+      }
+      platnosci: {
+        Row: Platnosc
+        Insert: PlatnoscInsert
+        Update: PlatnoscUpdate
         Relationships: []
       }
     }

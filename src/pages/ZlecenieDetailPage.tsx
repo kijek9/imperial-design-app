@@ -6,6 +6,10 @@ import { STATUSY, ETAPY } from '../constants/enums'
 import type { Zlecenie, ZlecenieUpdate } from '../lib/types'
 import Spinner from '../components/Spinner'
 import Komentarze from '../components/Komentarze'
+import Wycena from '../components/Wycena'
+import Platnosci from '../components/Platnosci'
+
+type Zakladka = 'szczegoly' | 'wycena' | 'platnosci'
 
 // Konwersja: '' z formularza → null do bazy (dla pól opcjonalnych).
 function pustyNaNull(v: string): string | null {
@@ -20,6 +24,7 @@ export default function ZlecenieDetailPage() {
 
   const [loading, setLoading] = useState(true)
   const [nieznalezione, setNieznalezione] = useState(false)
+  const [zakladka, setZakladka] = useState<Zakladka>('szczegoly')
 
   // Stan formularza (edytowalna kopia zlecenia).
   const [form, setForm] = useState<Zlecenie | null>(null)
@@ -73,6 +78,7 @@ export default function ZlecenieDetailPage() {
       link_maps: form.link_maps,
       telefon: form.telefon,
       kwota_umowa: form.kwota_umowa,
+      kwota_umowa_reczna: form.kwota_umowa_reczna,
       odpowiedzialny: form.odpowiedzialny,
       projekt_sprawdzony: form.projekt_sprawdzony,
       protokol_odbioru: form.protokol_odbioru,
@@ -97,6 +103,41 @@ export default function ZlecenieDetailPage() {
     }
     setForm(data)
     setKomunikat('Zapisano zmiany.')
+  }
+
+  // Przywróć kwotę umowy z zapisanej wyceny (koszty + zarobek) i wyłącz
+  // tryb ręczny, by znów była auto-synchronizowana.
+  async function przywrocZWyceny() {
+    if (!form || !id) return
+    setKomunikat(null)
+    const { data: w } = await supabase
+      .from('wyceny')
+      .select('koszty, zarobek')
+      .eq('zlecenie_id', id)
+      .maybeSingle()
+
+    if (!w) {
+      setKomunikat('Brak zapisanej wyceny dla tego zlecenia.')
+      return
+    }
+    const kosztyRazem = (w.koszty ?? []).reduce(
+      (s, k) => s + (Number(k.v) || 0),
+      0
+    )
+    const cena = kosztyRazem + w.zarobek
+
+    setZapis(true)
+    const { data, error } = await supabase
+      .from('zlecenia')
+      .update({ kwota_umowa: cena, kwota_umowa_reczna: false })
+      .eq('id', id)
+      .select('*')
+      .single()
+    setZapis(false)
+    if (!error && data) {
+      setForm(data)
+      setKomunikat('Przywrócono kwotę z wyceny.')
+    }
   }
 
   // Archiwizacja / przywrócenie zlecenia.
@@ -169,7 +210,57 @@ export default function ZlecenieDetailPage() {
         </div>
       </div>
 
-      {/* Szczegóły zlecenia */}
+      {/* Zakładki sekcji karty */}
+      <div className="inline-flex rounded-lg border border-white/10 bg-panel p-1">
+        <button
+          onClick={() => setZakladka('szczegoly')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            zakladka === 'szczegoly'
+              ? 'bg-karta text-krem shadow'
+              : 'text-przygaszony hover:text-krem'
+          }`}
+        >
+          Szczegóły
+        </button>
+        <button
+          onClick={() => setZakladka('wycena')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            zakladka === 'wycena'
+              ? 'bg-karta text-krem shadow'
+              : 'text-przygaszony hover:text-krem'
+          }`}
+        >
+          Wycena
+        </button>
+        <button
+          onClick={() => setZakladka('platnosci')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            zakladka === 'platnosci'
+              ? 'bg-karta text-krem shadow'
+              : 'text-przygaszony hover:text-krem'
+          }`}
+        >
+          Płatności
+        </button>
+      </div>
+
+      {/* ───────── Zakładka: Płatności ───────── */}
+      {zakladka === 'platnosci' && <Platnosci zlecenie={form} />}
+
+      {/* ───────── Zakładka: Wycena ───────── */}
+      {zakladka === 'wycena' && (
+        <Wycena
+          zlecenie={form}
+          onKwotaUmowaZWyceny={(cena) =>
+            setForm((f) =>
+              f ? { ...f, kwota_umowa: cena, kwota_umowa_reczna: false } : f
+            )
+          }
+        />
+      )}
+
+      {/* ───────── Zakładka: Szczegóły ───────── */}
+      {zakladka === 'szczegoly' && (
       <div className="karta space-y-5 p-6">
         <h2 className="text-xl">Szczegóły</h2>
 
@@ -237,17 +328,39 @@ export default function ZlecenieDetailPage() {
           </div>
 
           <div>
-            <label className="etykieta">Kwota na umowie (zł)</label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label className="etykieta mb-0">Kwota na umowie (zł)</label>
+              {form.kwota_umowa_reczna && (
+                <span className="flex items-center gap-2 text-xs text-przygaszony">
+                  <span className="rounded bg-white/10 px-1.5 py-0.5">ręcznie</span>
+                  <button
+                    type="button"
+                    onClick={przywrocZWyceny}
+                    className="text-akcent hover:underline"
+                  >
+                    przywróć z wyceny
+                  </button>
+                </span>
+              )}
+            </div>
             <input
               type="number"
               step="0.01"
               value={form.kwota_umowa ?? ''}
-              onChange={(e) =>
-                ustaw(
-                  'kwota_umowa',
-                  e.target.value === '' ? null : Number(e.target.value)
+              onChange={(e) => {
+                // Ręczna zmiana kwoty → przestajemy auto-synchronizować z wyceny.
+                setForm((f) =>
+                  f
+                    ? {
+                        ...f,
+                        kwota_umowa:
+                          e.target.value === '' ? null : Number(e.target.value),
+                        kwota_umowa_reczna: true,
+                      }
+                    : f
                 )
-              }
+                setKomunikat(null)
+              }}
               className="pole"
               placeholder="np. 12500"
             />
@@ -319,7 +432,7 @@ export default function ZlecenieDetailPage() {
           Utworzył: {nazwa(form.utworzyl)}
         </p>
 
-        {/* TODO Etap 2: wycena (kalkulator, kalkulacja kosztów, marża) */}
+        {/* Etap 2: wycena → zakładka „Wycena" powyżej */}
         {/* TODO Etap 3: zadania, akcesoria, AGD */}
         {/* TODO Etap 4: załączniki / pliki */}
 
@@ -347,6 +460,7 @@ export default function ZlecenieDetailPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Komentarze */}
       <Komentarze zlecenieId={form.id} />
