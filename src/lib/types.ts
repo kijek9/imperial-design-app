@@ -16,6 +16,15 @@ export type Etap =
   | 'montaz'
   | 'odbior'
 
+// Pojedyncza pozycja na liście "Tematy otwarte" w zakładce Szczegóły.
+// id jest generowane po stronie klienta (crypto.randomUUID) — służy tylko
+// jako stabilny klucz Reacta, nie jest powiązane z żadną tabelą.
+export type TematOtwarty = {
+  id: string
+  tresc: string
+  domkniete: boolean
+}
+
 // Uwaga: typy wierszy to aliasy `type`, nie `interface` — dzięki temu
 // pasują do `Record<string, unknown>` wymaganego przez typy supabase-js.
 export type Zlecenie = {
@@ -39,6 +48,16 @@ export type Zlecenie = {
   // Etap 2: gdy true, kwota_umowa była ustawiona ręcznie (rabaty/negocjacje)
   // i NIE jest już auto-nadpisywana z wyceny.
   kwota_umowa_reczna: boolean
+  // Szczegóły → sekcja Pomiar
+  data_pomiaru: string | null
+  pomiar_wykonany: boolean
+  przekazany_do_rysowania: boolean
+  // Znacznik czasu zaznaczenia "przekazany_do_rysowania" (ustawiany triggerem
+  // w bazie). Pod automatyzację — w UI na razie nieużywany.
+  przekazany_do_rysowania_at: string | null
+  drive_link: string | null
+  // Szczegóły → sekcja Tematy otwarte
+  tematy_otwarte: TematOtwarty[]
   // TODO Etap 3: zadania, akcesoria, AGD, załączniki
 }
 

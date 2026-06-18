@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useProfile } from '../hooks/useProfile'
 import { STATUSY, ETAPY } from '../constants/enums'
-import type { Zlecenie, ZlecenieUpdate } from '../lib/types'
+import type { Zlecenie, ZlecenieUpdate, TematOtwarty } from '../lib/types'
 import Spinner from '../components/Spinner'
 import Komentarze from '../components/Komentarze'
 import Wycena from '../components/Wycena'
@@ -25,6 +25,9 @@ export default function ZlecenieDetailPage() {
   const [loading, setLoading] = useState(true)
   const [nieznalezione, setNieznalezione] = useState(false)
   const [zakladka, setZakladka] = useState<Zakladka>('szczegoly')
+
+  // Lokalne (niezapisywane w bazie) położenie sekcji Pomiar: góra / dół.
+  const [pomiarNaDole, setPomiarNaDole] = useState(false)
 
   // Stan formularza (edytowalna kopia zlecenia).
   const [form, setForm] = useState<Zlecenie | null>(null)
@@ -62,6 +65,42 @@ export default function ZlecenieDetailPage() {
     setKomunikat(null)
   }
 
+  // ── Tematy otwarte: dodawanie / edycja / usuwanie pozycji ─────────────
+  function dodajTemat() {
+    const nowy: TematOtwarty = {
+      id: crypto.randomUUID(),
+      tresc: '',
+      domkniete: false,
+    }
+    setForm((f) =>
+      f ? { ...f, tematy_otwarte: [...f.tematy_otwarte, nowy] } : f
+    )
+    setKomunikat(null)
+  }
+
+  function zmienTemat(id: string, zmiana: Partial<Omit<TematOtwarty, 'id'>>) {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            tematy_otwarte: f.tematy_otwarte.map((t) =>
+              t.id === id ? { ...t, ...zmiana } : t
+            ),
+          }
+        : f
+    )
+    setKomunikat(null)
+  }
+
+  function usunTemat(id: string) {
+    setForm((f) =>
+      f
+        ? { ...f, tematy_otwarte: f.tematy_otwarte.filter((t) => t.id !== id) }
+        : f
+    )
+    setKomunikat(null)
+  }
+
   async function zapiszZmiany() {
     if (!form || !id) return
     setZapis(true)
@@ -82,6 +121,15 @@ export default function ZlecenieDetailPage() {
       odpowiedzialny: form.odpowiedzialny,
       projekt_sprawdzony: form.projekt_sprawdzony,
       protokol_odbioru: form.protokol_odbioru,
+      // Sekcja Pomiar (przekazany_do_rysowania_at ustawia trigger w bazie).
+      data_pomiaru: form.data_pomiaru,
+      pomiar_wykonany: form.pomiar_wykonany,
+      przekazany_do_rysowania: form.przekazany_do_rysowania,
+      drive_link: form.drive_link,
+      // Tematy otwarte — czyścimy puste wiersze (sam separator/pusty tekst).
+      tematy_otwarte: form.tematy_otwarte
+        .map((t) => ({ ...t, tresc: t.tresc.trim() }))
+        .filter((t) => t.tresc !== ''),
     }
 
     const { data, error } = await supabase
@@ -157,6 +205,146 @@ export default function ZlecenieDetailPage() {
       // Po archiwizacji wracamy do listy.
       navigate('/')
     }
+  }
+
+  // ── Sekcja Pomiar (renderowana na górze lub na dole zakładki) ─────────
+  function sekcjaPomiar() {
+    if (!form) return null
+    return (
+      <div className="karta space-y-5 p-6">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-xl">Pomiar</h2>
+          <button
+            type="button"
+            onClick={() => setPomiarNaDole((v) => !v)}
+            className="btn-ghost text-sm"
+          >
+            {pomiarNaDole ? '↑ Przesuń na górę' : '↓ Przesuń na dół'}
+          </button>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="etykieta">Data pomiaru</label>
+            <input
+              type="date"
+              value={form.data_pomiaru ?? ''}
+              onChange={(e) =>
+                ustaw('data_pomiaru', pustyNaNull(e.target.value))
+              }
+              className="pole"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="etykieta">Link do folderu Google Drive</label>
+            <div className="flex items-center gap-2">
+              <input
+                value={form.drive_link ?? ''}
+                onChange={(e) =>
+                  ustaw('drive_link', pustyNaNull(e.target.value))
+                }
+                className="pole flex-1"
+                placeholder="https://drive.google.com/…"
+              />
+              {form.drive_link && (
+                <a
+                  href={form.drive_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary whitespace-nowrap"
+                >
+                  Otwórz materiały
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-6 pt-1">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.pomiar_wykonany}
+              onChange={(e) => ustaw('pomiar_wykonany', e.target.checked)}
+              className="h-4 w-4 accent-akcent"
+            />
+            Pomiar wykonany
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.przekazany_do_rysowania}
+              onChange={(e) =>
+                ustaw('przekazany_do_rysowania', e.target.checked)
+              }
+              className="h-4 w-4 accent-akcent"
+            />
+            Przekazany do rysowania
+          </label>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Sekcja Tematy otwarte ─────────────────────────────────────────────
+  function sekcjaTematy() {
+    if (!form) return null
+    return (
+      <div className="karta space-y-4 p-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl">Tematy otwarte</h2>
+            <p className="mt-1 text-sm text-przygaszony">
+              Lista spraw do domknięcia. Odhacz, gdy temat załatwiony.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={dodajTemat}
+            className="btn-secondary whitespace-nowrap"
+          >
+            + dodaj temat
+          </button>
+        </div>
+
+        {form.tematy_otwarte.length === 0 ? (
+          <p className="text-sm text-przygaszony">Brak tematów.</p>
+        ) : (
+          <ul className="space-y-2">
+            {form.tematy_otwarte.map((t) => (
+              <li key={t.id} className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={t.domkniete}
+                  onChange={(e) =>
+                    zmienTemat(t.id, { domkniete: e.target.checked })
+                  }
+                  className="h-4 w-4 shrink-0 accent-akcent"
+                />
+                <input
+                  value={t.tresc}
+                  onChange={(e) => zmienTemat(t.id, { tresc: e.target.value })}
+                  className={`pole flex-1 ${
+                    t.domkniete ? 'text-przygaszony line-through' : ''
+                  }`}
+                  placeholder="Opisz temat do domknięcia…"
+                />
+                <button
+                  type="button"
+                  onClick={() => usunTemat(t.id)}
+                  className="shrink-0 rounded-md px-2 py-1 text-lg leading-none text-przygaszony transition hover:bg-white/10 hover:text-krem"
+                  aria-label="Usuń temat"
+                  title="Usuń temat"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )
   }
 
   if (loading) {
@@ -261,6 +449,9 @@ export default function ZlecenieDetailPage() {
 
       {/* ───────── Zakładka: Szczegóły ───────── */}
       {zakladka === 'szczegoly' && (
+      <div className="space-y-6">
+        {!pomiarNaDole && sekcjaPomiar()}
+
       <div className="karta space-y-5 p-6">
         <h2 className="text-xl">Szczegóły</h2>
 
@@ -435,9 +626,14 @@ export default function ZlecenieDetailPage() {
         {/* Etap 2: wycena → zakładka „Wycena" powyżej */}
         {/* TODO Etap 3: zadania, akcesoria, AGD */}
         {/* TODO Etap 4: załączniki / pliki */}
+      </div>
 
-        {/* Akcje */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-white/10 pt-5">
+        {sekcjaTematy()}
+
+        {pomiarNaDole && sekcjaPomiar()}
+
+        {/* Akcje — przycisk Zapisz utrwala wszystkie sekcje Szczegółów */}
+        <div className="karta flex flex-wrap items-center justify-between gap-4 p-6">
           <button
             onClick={przelaczArchiwum}
             disabled={zapis}
