@@ -466,6 +466,7 @@ export default function ZlecenieDetailPage() {
               f ? { ...f, kwota_umowa: cena, kwota_umowa_reczna: false } : f
             )
           }
+          onZapisano={pokazZapisano}
         />
       )}
 

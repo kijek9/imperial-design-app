@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   TYPY_WYCENY,
@@ -15,15 +15,24 @@ interface Props {
   // Wywoływane po zapisie wyceny, gdy kwota umowy została auto-zsynchronizowana
   // (kwota_umowa_reczna = false) — pozwala rodzicowi odświeżyć swój formularz.
   onKwotaUmowaZWyceny: (cena: number) => void
+  // Sygnał udanego autozapisu (wspólny toast „Zapisano" w karcie zlecenia).
+  onZapisano?: () => void
 }
 
-export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
+export default function Wycena({
+  zlecenie,
+  onKwotaUmowaZWyceny,
+  onZapisano,
+}: Props) {
   const [loading, setLoading] = useState(true)
   const [typ, setTyp] = useState<TypWyceny>('szafka')
   const [koszty, setKoszty] = useState<KosztPozycja[]>(DOMYSLNE_KOSZTY)
   const [zarobek, setZarobek] = useState<number>(progDlaTypu('szafka').standard)
-  const [zapis, setZapis] = useState(false)
   const [komunikat, setKomunikat] = useState<string | null>(null)
+  // Migawka ostatnio zapisanego stanu — chroni przed zbędnym zapisem po
+  // wczytaniu i przy braku faktycznej zmiany. Timer = debounce autozapisu.
+  const ostatniZapisRef = useRef<string>('')
+  const debTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   // Wczytaj istniejącą wycenę (jeśli jest), inaczej zostaw domyślne.
   useEffect(() => {
@@ -36,15 +45,23 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
       .maybeSingle()
       .then(({ data }) => {
         if (!aktywne) return
+        // Wartości po wczytaniu (data z bazy lub domyślne z initial state).
+        let tt = typ
+        let kk = koszty
+        let zz = zarobek
         if (data) {
-          setTyp(data.typ)
-          setKoszty(
+          tt = data.typ
+          kk =
             Array.isArray(data.koszty) && data.koszty.length > 0
               ? data.koszty
               : DOMYSLNE_KOSZTY
-          )
-          setZarobek(data.zarobek)
+          zz = data.zarobek
+          setTyp(tt)
+          setKoszty(kk)
+          setZarobek(zz)
         }
+        // Zapamiętaj migawkę, żeby autozapis nie wystrzelił od razu po wczytaniu.
+        ostatniZapisRef.current = JSON.stringify({ typ: tt, koszty: kk, zarobek: zz })
         setLoading(false)
       })
     return () => {
@@ -60,6 +77,18 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
   const cena = kosztyRazem + zarobek
   const marza = cena > 0 ? Math.round((zarobek / cena) * 100) : 0
   const maxSuwak = Math.round(prog.premium * 1.6)
+
+  // Symulacja podatkowa (sp. z o.o., meble VAT 8% brutto, koszty VAT 23% brutto,
+  // CIT 9%). Liczona wprost z istniejących kosztyRazem i cena — bez dublowania.
+  const symulacja = useMemo(() => {
+    const vatNaliczony = kosztyRazem - kosztyRazem / 1.23 // do odliczenia z zakupów
+    const vatNalezny = cena - cena / 1.08 // VAT od sprzedaży 8%
+    const vatMebli = vatNalezny - vatNaliczony // zwykle ujemny (nadwyżka naliczonego)
+    const dochod = cena / 1.08 - kosztyRazem / 1.23 // przychód netto − koszty netto
+    const cit = 0.09 * Math.max(0, dochod) // CIT tylko od dodatniego dochodu
+    const poCit = dochod - cit
+    return { vatNaliczony, vatNalezny, vatMebli, dochod, cit, poCit }
+  }, [kosztyRazem, cena])
 
   // Zmiana typu → suwak ustawia się na "standard" nowego typu.
   function zmienTyp(nowy: TypWyceny) {
@@ -79,9 +108,10 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
     setKoszty((prev) => [...prev, { l: '', v: 0 }])
   }
 
+  // Autozapis wyceny (upsert + ewentualna synchronizacja kwoty umowy).
+  // Logika zapisu bez zmian — zmienił się tylko wyzwalacz (auto, nie przycisk).
   async function zapiszWycene() {
-    setZapis(true)
-    setKomunikat(null)
+    const snap = JSON.stringify({ typ, koszty, zarobek })
 
     // Oczyść puste nazwy kosztów przed zapisem.
     const koszteOczyszczone = koszty.filter(
@@ -99,7 +129,6 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
     )
 
     if (error) {
-      setZapis(false)
       setKomunikat('Nie udało się zapisać wyceny.')
       return
     }
@@ -113,13 +142,28 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
       if (!e2) onKwotaUmowaZWyceny(cena)
     }
 
-    setZapis(false)
-    setKomunikat(
-      zlecenie.kwota_umowa_reczna
-        ? 'Zapisano wycenę. Kwota umowy jest ustawiona ręcznie — nie nadpisano.'
-        : 'Zapisano wycenę. Kwota umowy zaktualizowana.'
-    )
+    ostatniZapisRef.current = snap
+    setKomunikat(null)
+    onZapisano?.()
   }
+
+  // Autozapis: po każdej zmianie typu / kosztów / zarobku zapisz z krótkim
+  // debounce (chroni bazę przy przeciąganiu suwaka; kwoty zapisują się po
+  // przerwie w pisaniu). Symulacja podatkowa liczy się na żywo i nic nie pisze.
+  useEffect(() => {
+    if (loading) return
+    const snap = JSON.stringify({ typ, koszty, zarobek })
+    if (snap === ostatniZapisRef.current) return
+    clearTimeout(debTimer.current)
+    debTimer.current = setTimeout(() => {
+      void zapiszWycene()
+    }, 500)
+    return () => clearTimeout(debTimer.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typ, koszty, zarobek, loading])
+
+  // Sprzątanie timera debounce przy odmontowaniu.
+  useEffect(() => () => clearTimeout(debTimer.current), [])
 
   if (loading) return <Spinner label="Wczytywanie wyceny…" />
 
@@ -216,6 +260,22 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
               className="mt-3 w-full accent-akcent"
             />
             <Podpowiedz zarobek={zarobek} marza={marza} prog={prog} />
+
+            {/* Co realnie zostaje (widok podatkowy) — pomaga zdecydować o cenie */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-panel px-3 py-2">
+                <p className="text-xs text-przygaszony">Zostaje przed CIT</p>
+                <p className="text-base font-semibold text-krem">
+                  {formatZl(symulacja.dochod)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-panel px-3 py-2">
+                <p className="text-xs text-przygaszony">Zostaje po CIT</p>
+                <p className="text-base font-semibold text-krem">
+                  {formatZl(symulacja.poCit)}
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Cena dla klienta */}
@@ -224,6 +284,59 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
               Cena dla klienta (koszty + zarobek)
             </span>
             <span className="text-xl font-bold text-krem">{formatZl(cena)}</span>
+          </div>
+
+          {/* ───────── Symulacja podatkowa (tylko właściciel) ───────── */}
+          <div className="space-y-3 border-t border-white/10 pt-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-naglowek text-lg text-krem">
+                Symulacja podatkowa
+              </h3>
+              <span className="rounded bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300 ring-1 ring-amber-500/30">
+                🔒 tylko właściciel
+              </span>
+            </div>
+
+            <div className="space-y-2 text-sm">
+              <WierszPodatek
+                label="VAT naliczony (z kosztów, 23%)"
+                wartosc={symulacja.vatNaliczony}
+              />
+              <WierszPodatek
+                label="VAT należny (sprzedaż, 8%)"
+                wartosc={symulacja.vatNalezny}
+              />
+              <div className="border-t border-white/10 pt-2">
+                <WierszPodatek
+                  label="VAT mebli (należny − naliczony)"
+                  wartosc={symulacja.vatMebli}
+                  mocne
+                />
+                {symulacja.vatMebli < 0 && (
+                  <p className="mt-1 text-xs text-przygaszony">
+                    nadwyżka VAT naliczonego — wchodzi do ogólnego rozliczenia
+                    VAT spółki
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2 border-t border-white/10 pt-2">
+                <WierszPodatek
+                  label="Dochód (podstawa CIT)"
+                  wartosc={symulacja.dochod}
+                />
+                <WierszPodatek label="CIT 9%" wartosc={symulacja.cit} />
+                <WierszPodatek
+                  label="Zostaje po CIT"
+                  wartosc={symulacja.poCit}
+                  mocne
+                />
+              </div>
+            </div>
+
+            <p className="rounded-lg bg-white/5 px-3 py-2 text-xs text-przygaszony ring-1 ring-white/10">
+              ⚠ Symulacja poglądowa — nie podstawa do rozliczeń. Zweryfikuj z
+              księgową.
+            </p>
           </div>
         </div>
 
@@ -242,7 +355,7 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
         </div>
       </div>
 
-      {/* Akcje */}
+      {/* Akcje — wycena zapisuje się automatycznie (autosave) */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <button
           type="button"
@@ -252,12 +365,13 @@ export default function Wycena({ zlecenie, onKwotaUmowaZWyceny }: Props) {
           Eksport oferty PDF
         </button>
         <div className="flex items-center gap-4">
-          {komunikat && (
-            <span className="text-sm text-przygaszony">{komunikat}</span>
+          {komunikat ? (
+            <span className="text-sm text-akcent">{komunikat}</span>
+          ) : (
+            <span className="text-xs text-przygaszony">
+              Zmiany zapisują się automatycznie.
+            </span>
           )}
-          <button onClick={zapiszWycene} disabled={zapis} className="btn-primary">
-            {zapis ? 'Zapisywanie…' : 'Zapisz wycenę'}
-          </button>
         </div>
       </div>
 
@@ -305,5 +419,29 @@ function Podpowiedz({
 
   return (
     <div className={`mt-3 rounded-lg px-3 py-2 text-sm ${klasy}`}>{tresc}</div>
+  )
+}
+
+// Wiersz w panelu symulacji podatkowej: etykieta + kwota (ujemne na czerwono).
+function WierszPodatek({
+  label,
+  wartosc,
+  mocne = false,
+}: {
+  label: string
+  wartosc: number
+  mocne?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className={mocne ? 'text-krem' : 'text-przygaszony'}>{label}</span>
+      <span
+        className={`tabular-nums ${mocne ? 'font-semibold ' : ''}${
+          wartosc < 0 ? 'text-rose-300' : 'text-krem'
+        }`}
+      >
+        {formatZl(wartosc)}
+      </span>
+    </div>
   )
 }
